@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using NDB.Audit.EF.Abstractions;
 using NDB.Audit.EF.Internal;
+using NDB.Audit.EF.Models;
 
 namespace NDB.Audit.EF.Internal;
 
@@ -31,4 +32,21 @@ internal sealed class DefaultAuditService : IAuditService
             await writer.WriteAsync(entries, ct);
         }
     }
+    public async Task<IReadOnlyList<AuditEntry>> WriteWithResultAsync(DbContext context,CancellationToken ct)
+    {
+        var entries = AuditEntryBuilder.Build(
+            context.ChangeTracker,
+            _context.Actor);
+
+        if (entries.Count == 0)
+            return entries;
+
+        foreach (var writer in _writers)
+        {
+            await writer.WriteAsync(entries, ct);
+        }
+
+        return entries;
+    }
+
 }
