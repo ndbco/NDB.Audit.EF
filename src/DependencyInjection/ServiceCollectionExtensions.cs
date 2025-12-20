@@ -9,6 +9,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddNdbAudit(
         this IServiceCollection services)
     {
+        services.AddScoped<IAuditContext, AuditContext>();
         services.AddScoped<IAuditService, DefaultAuditService>();
         return services;
     }

@@ -2,5 +2,5 @@
 
 public interface IAuditContext
 {
-    string? Actor { get; }
+    string? Actor { get; set; }
 }
