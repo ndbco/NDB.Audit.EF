@@ -21,8 +21,7 @@ internal sealed class DefaultAuditService : IAuditService
     public async Task WriteAsync(DbContext context, CancellationToken ct)
     {
         var entries = AuditEntryBuilder.Build(
-            context.ChangeTracker,
-            _context.Actor);
+            context.ChangeTracker,_context);
 
         if (entries.Count == 0)
             return;
@@ -35,8 +34,7 @@ internal sealed class DefaultAuditService : IAuditService
     public async Task<IReadOnlyList<AuditEntry>> WriteWithResultAsync(DbContext context,CancellationToken ct)
     {
         var entries = AuditEntryBuilder.Build(
-            context.ChangeTracker,
-            _context.Actor);
+            context.ChangeTracker, _context);
 
         if (entries.Count == 0)
             return entries;

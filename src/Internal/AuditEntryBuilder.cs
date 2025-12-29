@@ -7,7 +7,7 @@ namespace NDB.Audit.EF.Internal;
 
 internal static class AuditEntryBuilder
 {
-    public static List<AuditEntry> Build(ChangeTracker tracker, string? actor)
+    public static List<AuditEntry> Build(ChangeTracker tracker, IAuditContext context)
     {
         var result = new List<AuditEntry>();
 
@@ -39,7 +39,7 @@ internal static class AuditEntryBuilder
                 Entity = entry.Entity.GetType().Name,
                 EntityId = GetPrimaryKey(entry),
                 Action = entry.State.ToString(),
-                Actor = actor,
+                Actor = context.Actor,
                 Timestamp = DateTime.UtcNow,
                 Changes = changes
             });
