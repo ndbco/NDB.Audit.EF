@@ -1,194 +1,308 @@
 ﻿# NDB.Audit.EF
 
-Minimal, extensible audit trail for **Entity Framework Core**.
-
-`NDB.Audit.EF` provides a **clean and explicit audit mechanism** for EF Core
-without introducing repositories, Unit of Work patterns, or framework-level magic.
-
-This library is designed for **enterprise systems** that need
-**reliable audit trails** while keeping EF Core usage **pure and transparent**.
+> Lightweight and extensible audit logging for Entity Framework Core.
+> Automatically captures entity changes and writes structured audit entries via pluggable writers.
 
 ---
 
-## Key Features
+## Overview
 
-- Audit **Entity / Action / Old & New Values / Actor / Timestamp**
-- Works with **pure EF Core**
-- No repository, no DAL, no framework lock-in
-- Explicit, opt-in audit (no hidden hooks)
-- Minimal and readable extension methods
-- Supports **.NET 8** and **.NET 10**
+`NDB.Audit.EF` provides a simple, extensible audit mechanism for EF Core applications.
 
----
+It:
 
-## What This Library Is NOT
+* Tracks changes on entities marked as auditable
+* Captures modified properties (old vs new values)
+* Includes contextual metadata (actor, correlation, etc.)
+* Supports multiple audit writers
+* Integrates cleanly with `DbContext`
 
-- Not a repository pattern
-- Not a Unit of Work
-- Not a logging framework
-- Not a replacement for EF Core
-- Not coupled to ASP.NET, HTTP, or infrastructure
+This library focuses only on **capturing and dispatching audit events**.
+It does not enforce storage strategy.
 
 ---
 
-## Installation
+# Core Concepts
 
-```bash
-dotnet add package NDB.Audit.EF
+## 1. Auditable Entities
+
+To enable auditing, your entity must implement:
+
+```csharp
+public interface IAuditableEntity
+{
+}
 ```
 
-## Core Concepts
-### 1. Auditable Entity
-Only entities that explicitly implement IAuditableEntity
-will be included in audit logs.
-```code
-using NDB.Audit.EF.Abstractions;
+Only entities implementing this interface will be tracked.
 
-public class ProductionVehicle : IAuditableEntity
+---
+
+## 2. Audit Context
+
+Audit metadata is provided via `IAuditContext`:
+
+```csharp
+public interface IAuditContext
+{
+    string? Actor { get; set; }
+    string? ActorId { get; set; }
+    string? RoleId { get; set; }
+    string? RoleName { get; set; }
+    string? CorrelationId { get; set; }
+}
+```
+
+This allows you to attach:
+
+* Current user
+* Role
+* Correlation ID (for distributed tracing)
+* Custom metadata
+
+---
+
+## 3. Audit Entry Model
+
+### AuditEntry
+
+```csharp
+public sealed class AuditEntry
+{
+    public string Entity { get; init; }
+    public string EntityId { get; init; }
+    public string Action { get; init; }
+    public string? Actor { get; init; }
+    public DateTime Timestamp { get; init; }
+    public IReadOnlyList<AuditChange> Changes { get; init; }
+}
+```
+
+### AuditChange
+
+```csharp
+public sealed class AuditChange
+{
+    public string Property { get; init; }
+    public string? OldValue { get; init; }
+    public string? NewValue { get; init; }
+}
+```
+
+---
+
+# How It Works
+
+When `SaveChangesWithAuditAsync()` is called:
+
+1. EF Core tracks entity changes
+2. The library scans `ChangeTracker`
+3. It builds `AuditEntry` objects
+4. It dispatches them to all registered `IAuditWriter` implementations
+
+---
+
+# Quick Start
+
+## 1️⃣ Register Services
+
+```csharp
+services.AddNdbAudit();
+```
+
+This registers:
+
+* `IAuditContext`
+* `IAuditService`
+
+---
+
+## 2️⃣ Mark Entities
+
+```csharp
+public class User : IAuditableEntity
 {
     public Guid Id { get; set; }
-    public string EngineNumber { get; set; } = default!;
-    public int Status { get; set; }
-}
-```
-### 2. Audit Context (Actor)
-IAuditContext provides information about who performs the action.
-This is implemented in the application layer, not in the library.
-```code
-using NDB.Audit.EF.Abstractions;
-
-public class HttpAuditContext : IAuditContext
-{
-    private readonly IHttpContextAccessor _http;
-
-    public HttpAuditContext(IHttpContextAccessor http)
-    {
-        _http = http;
-    }
-
-    public string? Actor =>
-        _http.HttpContext?.User?.Identity?.Name ?? "SYSTEM";
+    public string Name { get; set; }
 }
 ```
 
-### 3. Audit Writer (Output)
-Audit output is fully pluggable.
-You decide where audit data goes:
-- Logger
-- Database
-- Message Queue
-- External service
+---
 
-Example: Logger writer
-```code
-using Microsoft.Extensions.Logging;
-using NDB.Audit.EF.Abstractions;
-using NDB.Audit.EF.Models;
+## 3️⃣ Use SaveChangesWithAuditAsync
 
-public class LoggerAuditWriter : IAuditWriter
+```csharp
+await context.SaveChangesWithAuditAsync();
+```
+
+Extension method:
+
+```csharp
+public static async Task<int> SaveChangesWithAuditAsync(
+    this DbContext context,
+    CancellationToken ct = default)
+```
+
+---
+
+# Writing Audit Logs
+
+The library does not dictate where audits are stored.
+You must implement `IAuditWriter`.
+
+```csharp
+public interface IAuditWriter
 {
-    private readonly ILogger<LoggerAuditWriter> _logger;
+    Task WriteAsync(
+        IEnumerable<AuditEntry> entries,
+        CancellationToken ct);
+}
+```
 
-    public LoggerAuditWriter(ILogger<LoggerAuditWriter> logger)
+Example: Save to database
+
+```csharp
+public class DbAuditWriter : IAuditWriter
+{
+    private readonly AuditDbContext _db;
+
+    public async Task WriteAsync(
+        IEnumerable<AuditEntry> entries,
+        CancellationToken ct)
     {
-        _logger = logger;
-    }
-
-    public Task WriteAsync(IEnumerable<AuditEntry> entries, CancellationToken ct)
-    {
-        foreach (var entry in entries)
-        {
-            _logger.LogInformation(
-                "AUDIT {Entity} {Action} by {Actor} | {Changes}",
-                entry.Entity,
-                entry.Action,
-                entry.Actor,
-                entry.Changes);
-        }
-
-        return Task.CompletedTask;
+        _db.AuditLogs.AddRange(entries);
+        await _db.SaveChangesAsync(ct);
     }
 }
 ```
 
-## Dependency Injection Setup
-```code
-builder.Services.AddHttpContextAccessor();
+Register your writer:
 
-builder.Services.AddScoped<IAuditContext, HttpAuditContext>();
-builder.Services.AddScoped<IAuditWriter, LoggerAuditWriter>();
-
-builder.Services.AddNdbAudit();
-```
-If no IAuditWriter is registered, audit runs silently.
-
-## Magic Extension (Explicit & Safe)
-### SaveChanges with Audit
-```code
-await dbContext.SaveChangesWithAuditAsync(cancellationToken);
+```csharp
+services.AddScoped<IAuditWriter, DbAuditWriter>();
 ```
 
-This method:
-- Calls SaveChangesAsync
-- Builds audit entries
-- Dispatches them to registered writers
-- Does nothing if audit is not configured
+Multiple writers are supported.
 
-## Example: Update Handler
-```code
-var vehicle = await _db.ProductionVehicles
-    .ForAudit()
-    .FirstOrDefaultAsync(x => x.Id == request.Id, ct);
+---
 
-if (vehicle == null)
-    return Result.NotFound("Vehicle not found");
+# Save With Result
 
-vehicle.EngineNumber = request.EngineNumber;
-vehicle.Status = request.Status;
+If you need audit entries returned:
 
-await _db.SaveChangesWithAuditAsync(ct);
-
-return Result.Ok();
+```csharp
+var entries = await auditService
+    .WriteWithResultAsync(context, ct);
 ```
 
-## Additional Extensions
-### Read-only Queries
-```code
-var vehicles = await _db.ProductionVehicles
-    .ReadOnly()
-    .Where(x => x.Status == Active)
-    .ToListAsync();
-```
-### Check Auditable Changes
-```code
-if (_db.HasAuditableChanges())
-{
-    await _db.SaveChangesWithAuditAsync(ct);
-}
+Or via extension:
+
+```csharp
+await context.SaveChangesWithAuditAsync();
 ```
 
-## Design Principles
-- Explicit over implicit
-- Opt-in audit only
-- Zero infrastructure coupling
-- Minimal surface area
-- EF Core remains the source of truth
+---
 
-## Versioning Strategy
-- 1.x → supports .NET 8 and .NET 10
-- Future major versions may drop older frameworks
+# Change Detection Behavior
 
-EF Core version is resolved by the application, not locked by the library.
+For `Modified` entities:
 
-## Related Libraries
-- NDB.Abstraction — request & result contracts
-- NDB.Kit — productivity helpers (AutoMapping, guards, utilities)
+* Compares original vs current values
+* Records only changed properties
 
-Each library is optional and can be used independently.
+For `Added` or `Deleted` entities:
 
-## Final Notes
+* Captures entity + action
+* No property diff for added entities
 
-If you want a clean audit trail
-without sacrificing EF Core clarity,
-NDB.Audit.EF gives you exactly that —
-no more, no less.
+Primary key is extracted automatically.
+
+---
+
+# Utility Extensions
+
+## Check if auditable changes exist
+
+```csharp
+context.HasAuditableChanges();
+```
+
+## Query modes
+
+```csharp
+query.ReadOnly();  // AsNoTracking
+query.ForAudit();  // AsTracking
+```
+
+---
+
+# Intended Architecture
+
+```text
+Application Layer
+    ↓
+DbContext
+    ↓
+NDB.Audit.EF
+    ↓
+IAuditWriter(s)
+    ↓
+Database / File / External System
+```
+
+---
+
+# Design Decisions
+
+* Only entities implementing `IAuditableEntity` are tracked
+* Writers are pluggable
+* No opinionated storage format
+* Minimal reflection usage
+* No dependency on ASP.NET
+* Scoped lifetime for context-bound metadata
+
+---
+
+# Non-Goals
+
+This library does not:
+
+* Provide a database schema
+* Replace EF interceptors
+* Provide UI for audit logs
+* Implement soft-delete
+* Track read access
+* Handle encryption
+
+It strictly captures write operations.
+
+---
+
+# Versioning Policy
+
+* MAJOR → Breaking change in audit contract
+* MINOR → New features / extensibility
+* PATCH → Fixes and improvements
+
+---
+
+# Dependencies
+
+* Microsoft.EntityFrameworkCore
+* Microsoft.Extensions.DependencyInjection
+
+Optional:
+
+* NDB.Kit (for extended EF integration)
+
+---
+
+# License
+
+Choose your preferred open-source license (MIT recommended).
+
+---
+
+# Maintained By
+
+Navigate Digital Boundaries (NDB)
