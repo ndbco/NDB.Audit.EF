@@ -6,5 +6,7 @@ internal sealed class AuditContext : IAuditContext
 {
     public string? Actor { get; set; }
     public string? ActorId { get; set; }
+    public string? RoleId { get; set; }
+    public string? RoleName { get; set; }
     public string? CorrelationId { get; set; }
 }

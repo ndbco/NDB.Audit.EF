@@ -4,5 +4,7 @@ public interface IAuditContext
 {
     string? Actor { get; set; }
     string? ActorId { get; set; }
+    string? RoleId { get; set; }
+    string? RoleName { get; set; }
     string? CorrelationId { get; set; }
 }
